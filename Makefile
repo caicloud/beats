@@ -186,3 +186,32 @@ mage:
 .PHONY: beats-dashboards
 beats-dashboards: mage update
 	@mage packageBeatDashboards
+
+WAIT_DIND=dockerd >/dev/null 2>&1 & \
+			count=0 ;\
+			while [ ! -S /var/run/docker.sock ] ;\
+			do if [ "$$count" -eq 60 ] ;\
+			then break ;\
+			fi ;\
+			sleep 1 ;\
+			count=$$((count+1)) ;\
+			done
+BUILD_BUILDER=docker build -t builder:latest -f filebeat/Dockerfile filebeat
+BUILD_BEATS_IN_BUILDER=docker run --rm \
+	-v /var/run/docker.sock:/var/run/docker.sock \
+	-v /go/src/github.com/elastic/beats:/go/src/github.com/elastic/beats \
+	-w /go/src/github.com/elastic/beats \
+	-e PLATFORMS="+linux/arm64 !defaults" \
+	builder:latest \
+	bash -c "curl -Lso - https://download.docker.com/linux/static/stable/x86_64/docker-18.03.1-ce.tgz | \
+		tar xzvf - -C /tmp && \
+		mv /tmp/docker/* /usr/bin/ ;\
+		mkdir -p filebeat/build/distributions ; \
+		make -C filebeat release"
+.PHONY: image
+image:
+	@docker run --privileged --rm \
+		-v ${PWD}:/go/src/github.com/elastic/beats \
+		-w /go/src/github.com/elastic/beats \
+		docker:18.03.1-ce-dind \
+		sh -c '${WAIT_DIND}; ${BUILD_BUILDER} && ${BUILD_BEATS_IN_BUILDER}'
